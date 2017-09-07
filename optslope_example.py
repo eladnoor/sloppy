@@ -9,7 +9,8 @@ from itertools import combinations
 
 def main():
     #analyze('wild_type', None, None)
-    analyze('rubisco', 'RBC', 'RBC,PRK', 3)
+    #analyze('rubisco', 'RBC', 'RBC,PRK', 3)
+    analyze('rump', 'H6PS', 'MMO,H6PS,H6PI', 2)
     #analyze('deoxyribose', 'DXS', 'DXS')
     #analyze('POG', 'MCS', 'MCS,MCL')
 
@@ -34,10 +35,12 @@ def analyze(title, target_reaction, knockins="", max_knockouts=2):
     core_model = init_wt_model('core', {}, BM_lower_bound=0.1)
     knockin_reactions(core_model, 'EDD,EDA', 0, 1000)
     knockin_reactions(core_model, 'EX_g6p,EX_f6p,EX_xu5p_D,EX_r5p,EX_dhap,EX_2pg,EX_e4p,EX_6pgc', 0, 0)
-
+    
     wt_model = clone_model(core_model)
     if knockins is not None:
         knockin_reactions(wt_model, knockins, 0, 1000)
+
+    set_exchange_bounds(wt_model, 'methanol', lower_bound=-999)
     
     sys.stdout.write("There are %d single knockouts\n" % len(single_ko_list))
     sys.stdout.write("There are %d carbon sources: %s\n" % (len(carbon_sources), ', '.join(carbon_sources)))

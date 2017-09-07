@@ -95,6 +95,10 @@ def knockin_reactions(model, ki_reactions, lower_bound=0, upper_bound=1000):
             add_metabolite(model, 'rubp_D_c', 'C5H12O11P2', 'D-ribulose 1,5-bisphosphate')
             sprs = {'rubp_D_c' : -1, 'h2o_c' : -1, 'co2_c' : -1, '3pg_c' : 2, 'h_c' : 3}
             add_reaction(model, rid, 'RuBisCO carboxylation', sprs, lower_bound, upper_bound)
+        elif rid == 'RBC':
+            add_metabolite(model, 'rubp_D_c', 'C5H12O11P2', 'D-ribulose 1,5-bisphosphate')
+            sprs = {'rubp_D_c' : -1, 'h2o_c' : -1, 'co2_c' : -1, '3pg_c' : 2, 'h_c' : 3}
+            add_reaction(model, rid, 'RuBisCO carboxylation', sprs, lower_bound, upper_bound)
         elif rid == 'PRK+RBC':
             sprs = {'ru5p_D_c' : -1, 'atp_c' : -1, 'h2o_c' : -1, 'co2_c' : -1, '3pg_c' : 2, 'h_c' : 3, 'adp_c' : 1}
             add_reaction(model, rid, 'PRK+RuBisCO', sprs, lower_bound, upper_bound)
@@ -134,6 +138,19 @@ def knockin_reactions(model, ki_reactions, lower_bound=0, upper_bound=1000):
             add_metabolite(model, 'sbp_c', 'C7H16O13P2', 'D-sedoheptulose 1,7-bisphosphate')
             sprs = {'sbp_c':1, 'g3p_c':-1, 'e4p_c':-1}
             add_reaction(model, rid, 'sedoheptulose bisphosphate aldolase', sprs, lower_bound, upper_bound)
+        elif rid == 'MMO':
+            add_metabolite(model, 'methanol_c', 'CH4O', 'methanol')
+            add_metabolite(model, 'formaldehyde_c', 'CH2O', 'formaldehyde')
+            sprs = {'methanol_c' : -1, 'nad_c' : -1, 'formaldehyde_c' : 1, 'nadh_c' : 1}
+            add_reaction(model, rid, 'methanol dehydrogenase', sprs, lower_bound, upper_bound)
+        elif rid == 'H6PS':
+            add_metabolite(model, 'hexulose6p_c', 'CH4O', 'D-hexulose 6-phosphate')
+            sprs = {'ru5p_D_c' : -1, 'formaldehyde_c' : -1, 'hexulose6p_c' : 1}
+            add_reaction(model, rid, 'hexulose-6-phosphate synthetase', sprs, lower_bound, upper_bound)
+        elif rid == 'H6PI':
+            add_metabolite(model, 'hexulose6p_c', 'CH4O', 'D-hexulose 6-phosphate')
+            sprs = {'hexulose6p_c' : -1, 'f6p_c' : 1}
+            add_reaction(model, rid, 'hexulose-6-phosphate isomerase', sprs, lower_bound, upper_bound)
         else:
             raise Exception('unknown knockin reaction: ' + rid)
             
