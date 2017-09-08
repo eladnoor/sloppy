@@ -1,6 +1,3 @@
-import scipy.sparse
-from itertools import chain
-import os, sys, pickle, re
 from copy import deepcopy
 from cobra.manipulation.modify import convert_to_irreversible
 from cobra.io.sbml import create_cobra_model_from_sbml_file
@@ -138,7 +135,7 @@ def knockin_reactions(model, ki_reactions, lower_bound=0, upper_bound=1000):
             add_metabolite(model, 'sbp_c', 'C7H16O13P2', 'D-sedoheptulose 1,7-bisphosphate')
             sprs = {'sbp_c':1, 'g3p_c':-1, 'e4p_c':-1}
             add_reaction(model, rid, 'sedoheptulose bisphosphate aldolase', sprs, lower_bound, upper_bound)
-        elif rid == 'MMO':
+        elif rid == 'MEDH':
             add_metabolite(model, 'methanol_c', 'CH4O', 'methanol')
             add_metabolite(model, 'formaldehyde_c', 'CH2O', 'formaldehyde')
             sprs = {'methanol_c' : -1, 'nad_c' : -1, 'formaldehyde_c' : 1, 'nadh_c' : 1}
@@ -151,6 +148,14 @@ def knockin_reactions(model, ki_reactions, lower_bound=0, upper_bound=1000):
             add_metabolite(model, 'hexulose6p_c', 'CH4O', 'D-hexulose 6-phosphate')
             sprs = {'hexulose6p_c' : -1, 'f6p_c' : 1}
             add_reaction(model, rid, 'hexulose-6-phosphate isomerase', sprs, lower_bound, upper_bound)
+        elif rid == 'H4MPTP':
+            add_metabolite(model, 'formaldehyde_c', 'CH2O', 'formaldehyde')
+            add_metabolite(model, 'for_c', 'CH2O2', 'formate')
+            sprs = {'formaldehyde_c' : -1, 'for_c' : 1}
+            add_reaction(model, rid, 'methylene tetrahydromethanopterin pathway', sprs, lower_bound, upper_bound)
+        elif rid == 'FDH':
+            sprs = {'for_c' : -1, 'nad_c': -1, 'co2_c' : 1, 'nadh_c': 1}
+            add_reaction(model, rid, 'formate dehydrogenase', sprs, lower_bound, upper_bound)
         else:
             raise Exception('unknown knockin reaction: ' + rid)
             
