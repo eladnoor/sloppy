@@ -22,8 +22,16 @@ def analyze(target_reaction, knockins="", max_knockouts=2):
                       'ENO','PYK','PPS','PDH','PFL','G6PDH2r,PGL','GND',
                       'EDD,EDA','RPE','RPI','TKT1,TKT2','TALA','PPC','PPCK',
                       'CS','ACONTa,ACONTb','ALCD2x','ACALD']
-    carbon_sources = ['g6p', 'f6p', '6pgc', 'r5p', 'succ', 'xu5p_D',
-                      '2pg', 'ac', 'dhap', '']
+    carbon_sources = ['methanol,g6p',
+                      'methanol,f6p',
+                      'methanol,6pgc',
+                      'methanol,r5p',
+                      'methanol,succ',
+                      'methanol,xu5p_D',
+                      'methanol,2pg',
+                      'methanol,ac',
+                      'methanol,dhap',
+                      'methanol']
     
     core_model = init_wt_model('core', {}, BM_lower_bound=0.1)
     knockin_reactions(core_model, 'EDD,EDA', 0, 1000)
@@ -76,7 +84,7 @@ def analyze(target_reaction, knockins="", max_knockouts=2):
                     slope = 0
                 else:
                     slope = OptKnock(temp_model).get_slope(target_reaction)
-                data.append([len(kos)] + 
+                data.append(['|'.join(kos), len(kos)] + 
                             list(kos) + 
                             [None] * (max_knockouts - len(kos)) + 
                             [carbon_source, yd, slope])
@@ -86,10 +94,8 @@ def analyze(target_reaction, knockins="", max_knockouts=2):
     ko_cols = ['knockout %d' % (i+1) for i in xrange(max_knockouts)]
 
     df = pd.DataFrame(data=data,
-                      columns=['number of KOs'] + ko_cols +
+                      columns=['knockouts', 'number of KOs'] + ko_cols +
                               ['carbon source', 'yield', 'slope'])
-
-    df.set_index()
 
     return df
 
@@ -107,19 +113,15 @@ if __name__ == "__main__":
     if True:    
         df = analyze(target_reaction, knockins, max_ko)
         with open(df_fname, 'w') as fp:
-            df.to_csv(fp)
+            df.round(3).to_csv(fp)
     else:
         df = pd.DataFrame.from_csv(df_fname)
 
     # find knockouts that can grow without extra carbon
     # and also have a small slope for H6PS for at least one
     # other carbon
-    ko_cols = ['knockout %d' % (i+1) for i in xrange(max_ko)]
-    df[ko_cols] = df[ko_cols].fillna('')
-    df['carbon source'] = df['carbon source'].fillna('methanol')
-    df['all knockouts'] = df['knockout 1'].str.cat([df[c] for c in ko_cols[1:]], sep='|')
-    df_yield = df.pivot(index='all knockouts', columns='carbon source', values='yield').round(3)
-    df_slope = df.pivot(index='all knockouts', columns='carbon source', values='slope').round(3)
+    df_yield = df.pivot(index='knockouts', columns='carbon source', values='yield').round(3)
+    df_slope = df.pivot(index='knockouts', columns='carbon source', values='slope').round(3)
     
     methanol_growers_slopes = df_slope[df_yield['methanol'] > 0]
     methanol_growers_slopes = methanol_growers_slopes[methanol_growers_slopes.max(axis=1) > 0]
