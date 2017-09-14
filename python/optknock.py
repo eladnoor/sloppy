@@ -2,8 +2,11 @@ import numpy as np
 from copy import deepcopy
 from pulp import LpProblem, LpMaximize, LpMinimize, LpVariable, LpAffineExpression,\
                  solvers, LpContinuous, LpBinary, LpStatusOptimal, lpSum, LpStatus
-from draw_flux import DrawFlux
-from cobra.core.Solution import Solution
+from cobra.core import Solution
+from python.models import Model
+import sys
+import pandas as pd
+from itertools import combinations
 
 M = 1000
 
@@ -204,12 +207,16 @@ class OptKnock(object):
 
         if self.prob.status != LpStatusOptimal:
             if self.verbose:
-                print "LP was not solved because: ", LpStatus[self.prob.status]
-            self.solution = Solution(None)
-        else:        
-            self.solution = Solution(self.prob.objective.value())
+                print("LP was not solved because: " + LpStatus[self.prob.status])
+            self.solution = Solution(None, None, None)
+        else:
             if self.has_flux_as_variables:
-                self.solution.x = [self.var_v[r].varValue for r in self.model.reactions]
+                x = [self.var_v[r].varValue for r in self.model.reactions]
+            else:
+                x = []
+            self.solution = Solution(self.prob.objective.value(),
+                                     status=self.prob.status,
+                                     fluxes=x)
         self.solution.status = self.prob.status
         
         return self.solution
@@ -224,49 +231,49 @@ class OptKnock(object):
         obj = self.get_objective_value()
         if obj is None:
             return
-        print "Objective : %6.3f" % obj
+        print("Objective : %6.3f" % obj)
         if not short:
-            print "List of reactions : "
+            print("List of reactions : ")
             for r in self.model.reactions:
-                print "%30s (%4g <= v <= %4g) : v = %6.3f" % \
-                    (r.name, r.lower_bound, r.upper_bound, self.var_v[r].varValue)
+                print("%30s (%4g <= v <= %4g) : v = %6.3f" % \
+                    (r.name, r.lower_bound, r.upper_bound, self.var_v[r].varValue))
 
     def print_dual_results(self, short=True):
         obj = self.get_objective_value()
         if obj is None:
             return
-        print "Objective : %6.3f" % obj
+        print("Objective : %6.3f" % obj)
         if not short:
-            print "List of reactions : "
+            print("List of reactions : ")
             for r in self.model.reactions:
-                print "%30s (%4g <= v <= %4g) : w_L = %5.3f, w_U = %5.3f" % \
+                print("%30s (%4g <= v <= %4g) : w_L = %5.3f, w_U = %5.3f" % \
                     (r.id, r.lower_bound, r.upper_bound, 
-                     self.var_w_L[r].varValue, self.var_w_U[r].varValue) 
-            print "List of metabolites : "
+                     self.var_w_L[r].varValue, self.var_w_U[r].varValue))
+            print("List of metabolites : ")
             for m in self.model.metabolites:
-                print "%30s : lambda = %5.3f, " % \
-                    (m.id, self.var_lambda[m].varValue)
+                print("%30s : lambda = %5.3f, " % \
+                    (m.id, self.var_lambda[m].varValue))
                 
     def print_optknock_results(self, short=True):
         if self.solution.status != LpStatusOptimal:
             return
-        print "Objective : %6.3f" % self.prob.objective.value()
-        print "Biomass rate : %6.3f" % self.var_v[self.r_biomass].varValue
-        print "Sum of mu : %6.3f" % np.sum([mu.varValue for mu in self.var_mu.values()])
-        print "Knockouts : "
-        print '   ;   '.join(['"%s" (%s)' % (r.name, r.id) for r, val in self.var_y.iteritems() if val.varValue == 0]) 
+        print("Objective : %6.3f" % self.prob.objective.value())
+        print("Biomass rate : %6.3f" % self.var_v[self.r_biomass].varValue)
+        print("Sum of mu : %6.3f" % np.sum([mu.varValue for mu in self.var_mu.values()]))
+        print("Knockouts : ")
+        print('   ;   '.join(['"%s" (%s)' % (r.name, r.id) for r, val in self.var_y.iteritems() if val.varValue == 0]))
         if not short:
-            print "List of reactions : "
+            print("List of reactions : ")
             for r in self.model.reactions:
-                print '%25s (%5s) : %4g  <=  v=%5g  <=  %4g ; y = %d ; mu = %g ; w_L = %5g ; w_U = %5g' % \
+                print('%25s (%5s) : %4g  <=  v=%5g  <=  %4g ; y = %d ; mu = %g ; w_L = %5g ; w_U = %5g' % \
                     ('"' + r.name + '"', r.id,
                      r.lower_bound, self.var_v[r].varValue, r.upper_bound,
                      self.var_y[r].varValue, self.var_mu[r].varValue,
-                     self.var_w_L[r].varValue, self.var_w_U[r].varValue) 
-            print "List of metabolites : "
+                     self.var_w_L[r].varValue, self.var_w_U[r].varValue))
+            print("List of metabolites : ")
             for m in self.model.metabolites:
-                print "%30s : lambda = %6.3f" % \
-                    (m.id, self.var_lambda[m].varValue)
+                print("%30s : lambda = %6.3f" % \
+                    (m.id, self.var_lambda[m].varValue))
 
     def get_optknock_knockouts(self):
         return ','.join([r.id for r, val in self.var_y.iteritems() if val.varValue == 0])
@@ -366,8 +373,70 @@ class OptKnock(object):
         analysis_toolbox.model_summary(self.model, self.solution, html)
         
     def draw_svg(self, html):
+        from python.draw_flux import DrawFlux
+
         # Parse the SVG file of central metabolism
         drawer = DrawFlux('data/CentralMetabolism.svg')
         #drawer = DrawFlux('data/EcoliMetabolism.svg')
         drawer.ToSVG(self.model, self.solution, html)
 
+    @staticmethod
+    def analyze_kos(carbon_sources, single_kos,
+                    target_reaction, knockins="", n_knockouts=2, n_threads=2,
+                    carbon_uptake_rate=50):
+        """
+            Args:
+                target_reaction - the reaction for which the coupling to BM yield is made
+                knockins        - extra reactions to add to the model
+                max_knockouts   - the maximum number of simultaneous knockouts
+                carbon_uptake_rate - in units of mmol C / (gDW*h)
+        """
+        wt_model = Model.initialize()
+        
+        if knockins is not None:
+            wt_model.knockin_reactions(knockins, 0, 1000)
+      
+        sys.stdout.write("There are %d single knockouts\n" % len(single_kos))
+        sys.stdout.write("There are %d carbon sources: %s\n" %
+                         (len(carbon_sources), ', '.join(carbon_sources)))
+        data = []
+        
+        kos_and_cs = [(kos, cs) for kos in combinations(single_kos, n_knockouts)
+                                for cs in carbon_sources]
+            
+        def calculate_yield_and_slope(params):
+            kos, carbon_source = params
+            sys.stderr.write('KOs = ' + ', '.join(kos) + ': ' + carbon_source + '\n')
+            temp_model = wt_model.clone()
+            if carbon_source == 'electrons':
+                temp_model.knockin_reactions('RED', 0, carbon_uptake_rate*2)
+            elif carbon_source != '':
+                # find out how many carbon atoms are in the carbon source
+                # and normalize the uptake rate to be in units of mmol 
+                # carbon-source / (gDW*h) 
+                nC = 0
+                for cs in carbon_source.split(','):
+                    met = wt_model.metabolites[
+                        wt_model.metabolites.index(cs + '_c')]
+                    nC += met.elements['C']
+                uptake_rate = carbon_uptake_rate / float(nC)
+    
+                for cs in carbon_source.split(','):
+                    temp_model.set_exchange_bounds(cs, lower_bound=-uptake_rate)
+            
+            for ko in kos:
+                if ko != '':
+                    temp_model.knockout_reactions(ko)
+            
+            yd = OptKnock(temp_model).solve_FBA() or 0
+            if (target_reaction is not None) and (yd == 0):
+                slope = 0
+            else:
+                slope = OptKnock(temp_model).get_slope(target_reaction)
+            return ('|'.join(kos), carbon_source, yd, slope)
+        
+        data = map(calculate_yield_and_slope, kos_and_cs)
+        df = pd.DataFrame(data=list(data),
+                          columns=['knockouts', 'carbon source', 'yield', 'slope'])
+    
+        return df
