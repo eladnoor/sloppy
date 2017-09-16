@@ -208,17 +208,17 @@ class OptKnock(object):
         if self.prob.status != LpStatusOptimal:
             if self.verbose:
                 print("LP was not solved because: " + LpStatus[self.prob.status])
-            self.solution = Solution(None, None, None)
+            self.solution = Solution(objective_value=None,
+                                     status=self.prob.status,
+                                     fluxes=None)
         else:
             if self.has_flux_as_variables:
                 x = [self.var_v[r].varValue for r in self.model.reactions]
             else:
                 x = []
-            self.solution = Solution(self.prob.objective.value(),
+            self.solution = Solution(objective_value=self.prob.objective.value(),
                                      status=self.prob.status,
                                      fluxes=x)
-        self.solution.status = self.prob.status
-        
         return self.solution
     
     def get_objective_value(self):
