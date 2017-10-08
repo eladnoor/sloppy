@@ -1,12 +1,14 @@
 import numpy as np
 from copy import deepcopy
-from pulp import LpProblem, LpMaximize, LpMinimize, LpVariable, LpAffineExpression,\
-                 solvers, LpContinuous, LpBinary, LpStatusOptimal, lpSum, LpStatus
 from cobra.core import Solution
-from python.models import Model
 import sys
 import pandas as pd
 from itertools import combinations
+import optlang
+#optlang.interface = optlang.scipy_interface
+
+from python import models
+from python import draw_flux
 
 M = 1000
 
@@ -14,6 +16,7 @@ class OptKnock(object):
 
     def __init__(self, model, verbose=False):
         self.model = deepcopy(model)
+        self.prob = optlang.Model(name='OptKnock')
         self.verbose = verbose
 
         # locate the biomass reaction
@@ -24,25 +27,14 @@ class OptKnock(object):
         self.r_biomass = biomass_reactions[0]
         
         self.has_flux_as_variables = False
-    
-    def create_prob(self, sense=LpMaximize, use_glpk=False):
-        # create the LP
-        self.prob = LpProblem('OptKnock', sense=sense)
-        if use_glpk:
-            self.prob.solver = solvers.GLPK()
-        else:
-            self.prob.solver = solvers.CPLEX(msg=self.verbose)
-        if not self.prob.solver.available():
-            raise Exception("CPLEX not available")    
 
     def add_primal_variables_and_constraints(self):
         # create the continuous flux variables (can be positive or negative)
         self.var_v = {}
         for r in self.model.reactions:
-            self.var_v[r] = LpVariable("v_%s" % r.id,
-                                       lowBound=r.lower_bound,
-                                       upBound=r.upper_bound,
-                                       cat=LpContinuous)
+            self.var_v[r] = optlang.Variable('v_%s' % r.id,
+                                             lb=r.lower_bound,
+                                             ub=r.upper_bound)
 
         # this flag will be used later to know if to expect the flux
         # variables to exist
@@ -50,53 +42,51 @@ class OptKnock(object):
         
         # add the mass-balance constraints to each of the metabolites (S*v = 0)
         for m in self.model.metabolites:
-            S_times_v = LpAffineExpression([(self.var_v[r], r.get_coefficient(m))
-                                            for r in m.reactions])
-            self.prob.addConstraint(S_times_v == 0, 'mass_balance_%s' % m.id)
+            S_times_v = sum(self.var_v[r] * r.get_coefficient(m)
+                            for r in m.reactions)
+            self.prob.add(optlang.Constraint(S_times_v, lb=0, ub=0))
     
     def add_dual_variables_and_constraints(self):
         # create dual variables associated with stoichiometric constraints
-        self.var_lambda = dict([(m, LpVariable("lambda_%s" % m.id, 
-                                               lowBound=-M,
-                                               upBound=M,
-                                               cat=LpContinuous))
+        self.var_lambda = dict([(m, optlang.Variable('lambda_%s' % m.id, 
+                                             lb=-M, un=M))
                                 for m in self.model.metabolites])
 
         # create dual variables associated with the constraints on the primal fluxes
-        self.var_w_U = dict([(r, LpVariable("w_U_%s" % r.id, lowBound=0, upBound=M, cat=LpContinuous))
+        self.var_w_U = dict([(r, optlang.Variable("w_U_%s" % r.id, lb=0, ub=M))
                              for r in self.model.reactions])
-        self.var_w_L = dict([(r, LpVariable("w_L_%s" % r.id, lowBound=0, upBound=M, cat=LpContinuous))
+        self.var_w_L = dict([(r, optlang.Variable("w_L_%s" % r.id, lb=0, ub=M))
                              for r in self.model.reactions])
 
         # add the dual constraints:
         #   S'*lambda + w_U - w_L = c_biomass
         for r in self.model.reactions:
-            S_times_lambda = LpAffineExpression([(self.var_lambda[m], coeff)
-                                                 for m, coeff in r._metabolites.iteritems()
-                                                 if coeff != 0])
+            S_times_lambda = sum(self.var_lambda[m] * coeff
+                                 for m, coeff in r._metabolites.iteritems()
+                                 if coeff != 0)
             row_sum = S_times_lambda + self.var_w_U[r] - self.var_w_L[r]
-            self.prob.addConstraint(row_sum == r.objective_coefficient, 'dual_%s' % r.id)
+            self.prob.add(optlang.Constraint(row_sum, lb=r.objective_coefficient,
+                                             ub=r.objective_coefficient))
                                    
-    def prepare_FBA_primal(self, use_glpk=False):
+    def prepare_FBA_primal(self):
         """
             Run standard FBA (primal)
         """
-        self.create_prob(sense=LpMaximize, use_glpk=use_glpk)
         self.add_primal_variables_and_constraints()
-        self.prob.setObjective(self.var_v[self.r_biomass])
+        self.prob.objective = optlang.Objective(self.var_v[self.r_biomass],
+                                                direction='max')
 
     def prepare_FBA_dual(self, use_glpk=False):
         """
             Run shadow FBA (dual)
         """
-        self.create_prob(sense=LpMinimize, use_glpk=use_glpk)
         self.add_dual_variables_and_constraints()
         
-        w_sum = LpAffineExpression([(self.var_w_U[r], r.upper_bound)
-                                    for r in self.model.reactions if r.upper_bound != 0] +
-                                   [(self.var_w_L[r], -r.lower_bound)
-                                    for r in self.model.reactions if r.lower_bound != 0])
-        self.prob.setObjective(w_sum)
+        w_sum_ub = sum([self.var_w_U[r] * r.upper_bound
+                        for r in self.model.reactions if r.upper_bound != 0])
+        w_sum_lb = sum([self.var_w_L[r] * -r.lower_bound
+                        for r in self.model.reactions if r.lower_bound != 0])
+        self.prob.objective = optlang.Objective(w_sum_ub + w_sum_lb, direction='min')
     
     def get_reaction_by_id(self, reaction_id):
         if reaction_id not in self.model.reactions:
@@ -107,18 +97,19 @@ class OptKnock(object):
         
     def add_optknock_variables_and_constraints(self):
         # create the binary variables indicating which reactions knocked out
-        self.var_y = dict([(r, LpVariable("y_%s" % r.id, cat=LpBinary))
+        self.var_y = dict([(r, optlang.Variable("y_%s" % r.id, type='binary'))
                            for r in self.model.reactions])
 
         # create dual variables associated with the constraints on the primal fluxes
-        self.var_mu = dict([(r, LpVariable("mu_%s" % r.id, cat=LpContinuous))
+        self.var_mu = dict([(r, optlang.Variable("mu_%s" % r.id))
                              for r in self.model.reactions])
 
         # equate the objectives of the primal and the dual of the inner problem
         # to force its optimization:
         #   sum_j mu_j - v_biomass = 0
-        constr = (lpSum(self.var_mu.values()) - self.var_v[self.r_biomass] == 0)
-        self.prob.addConstraint(constr, 'daul_equals_primal')
+        constr = optlang.Constraint(sum(self.var_mu.values()) - self.var_v[self.r_biomass],
+                                    lb=0, ub=0)
+        self.prob.add(constr)
 
         # add the knockout constraints (when y_j = 0, v_j has to be 0)
         for r in self.model.reactions:
@@ -130,17 +121,16 @@ class OptKnock(object):
         # set the constraints on the auxiliary variables (mu):
         #    mu_j == y_j * (U_jj * w_u_j - L_jj * w_l_j)
         for r in self.model.reactions:
-            w_sum = LpAffineExpression([(self.var_w_U[r], r.upper_bound),
-                                        (self.var_w_L[r], -r.lower_bound)])
+            w_sum = self.var_w_U[r] * r.upper_bound - self.var_w_L[r] * r.lower_bound
 
             # mu_j + M*y_j >= 0
-            self.prob.addConstraint(self.var_mu[r] + M*self.var_y[r] >= 0, 'aux_1_%s' % r.id)
+            self.prob.add(optlang.Constraint(self.var_mu[r] + M*self.var_y[r], lb=0))
             # -mu_j + M*y_j >= 0
-            self.prob.addConstraint(-self.var_mu[r] + M*self.var_y[r] >= 0, 'aux_2_%s' % r.id)
+            self.prob.add(optlang.Constraint(-self.var_mu[r] + M*self.var_y[r], lb=0))
             # mu_j - (U_jj * w_u_j - L_jj * w_l_j) + M*(1-y_j) >= 0
-            self.prob.addConstraint(self.var_mu[r] - w_sum + M*(1-self.var_y[r]) >= 0, 'aux_3_%s' % r.id)
+            self.prob.add(optlang.Constraint(self.var_mu[r] - w_sum + M*(1-self.var_y[r]), lb=0))
             # -mu_j + (U_jj * w_u_j - L_jj * w_l_j) + M*(1-y_j) >= 0
-            self.prob.addConstraint(-self.var_mu[r] + w_sum + M*(1-self.var_y[r]) >= 0, 'aux_4_%s' % r.id)
+            self.prob.add(optlang.Constraint(-self.var_mu[r] + w_sum + M*(1-self.var_y[r]), lb=0))
 
     def add_knockout_bounds(self, ko_candidates=None, num_deletions=5):
         """ 
@@ -159,22 +149,22 @@ class OptKnock(object):
 
         # set the upper bound on the number of knockouts (K)
         #   sum (1 - y_j) <= K
-        ko_candidate_sum_y = [(self.var_y[r], 1) for r in ko_candidates]
-        constr = (LpAffineExpression(ko_candidate_sum_y) >= len(ko_candidate_sum_y) - num_deletions)
-        self.prob.addConstraint(constr, 'number_of_deletions')
+        ko_candidate_sum_y = sum([self.var_y[r] for r in ko_candidates])
+        constr = optlang.Constraint(ko_candidate_sum_y, lb=(len(ko_candidate_sum_y) - num_deletions))
+        self.prob.add(constr, 'number_of_deletions')
 
     def prepare_optknock(self, target_reaction_id, ko_candidates=None, 
                          num_deletions=5, use_glpk=False):
         # find the target reaction
         self.r_target = self.get_reaction_by_id(target_reaction_id)
 
-        self.create_prob(sense=LpMaximize, use_glpk=use_glpk)
         self.add_primal_variables_and_constraints()
         self.add_dual_variables_and_constraints()
         self.add_optknock_variables_and_constraints()
 
         # add the objective of maximizing the flux in the target reaction
-        self.prob.setObjective(self.var_v[self.r_target])
+        self.prob.objective = optlang.Objective(
+            self.var_v[self.r_target], direction='max')
 
         self.add_knockout_bounds(ko_candidates, num_deletions)
 
@@ -189,13 +179,14 @@ class OptKnock(object):
         self.r_target.lower_bound = 0
         self.r_target.upper_bound = 0
 
-        self.create_prob(sense=LpMaximize, use_glpk=use_glpk)
         self.add_primal_variables_and_constraints()
         self.add_dual_variables_and_constraints()
         self.add_optknock_variables_and_constraints()
 
         # set the objective as maximizing the shadow price of v_target upper bound
-        self.prob.setObjective(self.var_w_U[self.r_target] - self.var_w_L[self.r_target])
+        self.prob.objective = optlang.Objective(
+            self.var_w_U[self.r_target] - self.var_w_L[self.r_target],
+            direction='max')
 
         self.add_knockout_bounds(ko_candidates, num_deletions)
 
@@ -203,29 +194,29 @@ class OptKnock(object):
         self.prob.writeLP(fname)
 
     def solve(self):
-        self.prob.solve()
+        self.prob.optimize()
 
-        if self.prob.status != LpStatusOptimal:
+        if self.prob.status != 'optimal':
             if self.verbose:
-                print("LP was not solved because: " + LpStatus[self.prob.status])
+                print("LP was not solved because: " + self.prob.status)
             self.solution = Solution(objective_value=None,
                                      status=self.prob.status,
                                      fluxes=None)
         else:
             if self.has_flux_as_variables:
-                x = [self.var_v[r].varValue for r in self.model.reactions]
+                x = [self.var_v[r].primal for r in self.model.reactions]
             else:
                 x = []
-            self.solution = Solution(objective_value=self.prob.objective.value(),
+            self.solution = Solution(objective_value=self.prob.objective.value,
                                      status=self.prob.status,
                                      fluxes=x)
         return self.solution
     
     def get_objective_value(self):
-        if self.solution.status != LpStatusOptimal:
+        if self.solution.status != 'optimal':
             return None
         else:
-            return self.prob.objective.value()
+            return self.prob.objective.value
 
     def print_primal_results(self, short=True):
         obj = self.get_objective_value()
@@ -236,7 +227,7 @@ class OptKnock(object):
             print("List of reactions : ")
             for r in self.model.reactions:
                 print("%30s (%4g <= v <= %4g) : v = %6.3f" % \
-                    (r.name, r.lower_bound, r.upper_bound, self.var_v[r].varValue))
+                    (r.name, r.lower_bound, r.upper_bound, self.var_v[r].primal))
 
     def print_dual_results(self, short=True):
         obj = self.get_objective_value()
@@ -248,42 +239,42 @@ class OptKnock(object):
             for r in self.model.reactions:
                 print("%30s (%4g <= v <= %4g) : w_L = %5.3f, w_U = %5.3f" % \
                     (r.id, r.lower_bound, r.upper_bound, 
-                     self.var_w_L[r].varValue, self.var_w_U[r].varValue))
+                     self.var_w_L[r].primal, self.var_w_U[r].primal))
             print("List of metabolites : ")
             for m in self.model.metabolites:
                 print("%30s : lambda = %5.3f, " % \
-                    (m.id, self.var_lambda[m].varValue))
+                    (m.id, self.var_lambda[m].primal))
                 
     def print_optknock_results(self, short=True):
-        if self.solution.status != LpStatusOptimal:
+        if self.solution.status != 'optimal':
             return
-        print("Objective : %6.3f" % self.prob.objective.value())
-        print("Biomass rate : %6.3f" % self.var_v[self.r_biomass].varValue)
-        print("Sum of mu : %6.3f" % np.sum([mu.varValue for mu in self.var_mu.values()]))
+        print("Objective : %6.3f" % self.get_objective_value)
+        print("Biomass rate : %6.3f" % self.var_v[self.r_biomass].primal)
+        print("Sum of mu : %6.3f" % np.sum([mu.primal for mu in self.var_mu.values()]))
         print("Knockouts : ")
-        print('   ;   '.join(['"%s" (%s)' % (r.name, r.id) for r, val in self.var_y.iteritems() if val.varValue == 0]))
+        print('   ;   '.join(['"%s" (%s)' % (r.name, r.id) for r, val in self.var_y.iteritems() if val.primal == 0]))
         if not short:
             print("List of reactions : ")
             for r in self.model.reactions:
                 print('%25s (%5s) : %4g  <=  v=%5g  <=  %4g ; y = %d ; mu = %g ; w_L = %5g ; w_U = %5g' % \
                     ('"' + r.name + '"', r.id,
-                     r.lower_bound, self.var_v[r].varValue, r.upper_bound,
-                     self.var_y[r].varValue, self.var_mu[r].varValue,
-                     self.var_w_L[r].varValue, self.var_w_U[r].varValue))
+                     r.lower_bound, self.var_v[r].primal, r.upper_bound,
+                     self.var_y[r].primal, self.var_mu[r].primal,
+                     self.var_w_L[r].primal, self.var_w_U[r].primal))
             print("List of metabolites : ")
             for m in self.model.metabolites:
                 print("%30s : lambda = %6.3f" % \
-                    (m.id, self.var_lambda[m].varValue))
+                    (m.id, self.var_lambda[m].primal))
 
     def get_optknock_knockouts(self):
-        return ','.join([r.id for r, val in self.var_y.iteritems() if val.varValue == 0])
+        return ','.join([r.id for r, val in self.var_y.iteritems() if val.primal == 0])
     
     def get_optknock_model(self):
-        if self.solution.status != LpStatusOptimal:
+        if self.solution.status != 'optimal':
             raise Exception('OptKnock failed, cannot generate a KO model')
         
         optknock_model = deepcopy(self.model)
-        knockout_reactions = [r for r, val in self.var_y.iteritems() if val.varValue == 0]
+        knockout_reactions = [r for r, val in self.var_y.iteritems() if val.primal == 0]
         for r in knockout_reactions:
             new_r = optknock_model.reactions[optknock_model.reactions.index(r.id)]
             new_r.lower_bound = 0
@@ -291,9 +282,9 @@ class OptKnock(object):
         return optknock_model
 
     def solve_FBA(self):
-        self.create_prob(sense=LpMaximize)
         self.add_primal_variables_and_constraints()
-        self.prob.setObjective(self.var_v[self.r_biomass])
+        self.prob.objective = optlang.Objective(self.var_v[self.r_biomass],
+                                                direction='max')
         self.solve()
         max_biomass = self.get_objective_value()
         return max_biomass
@@ -302,7 +293,6 @@ class OptKnock(object):
         """
             Run Flux Variability Analysis on the provided reaction
         """
-        self.create_prob(sense=LpMaximize)
         self.add_primal_variables_and_constraints()
         self.prob.setObjective(self.var_v[self.r_biomass])
         self.solve()
@@ -312,12 +302,13 @@ class OptKnock(object):
         self.var_v[self.r_biomass].lowBound = max_biomass - 1e-5
 
         r_target = self.get_reaction_by_id(reaction_id)
-        self.prob.setObjective(self.var_v[r_target])
-        self.prob.sense = LpMaximize
+        self.prob.objective = optlang.Objective(self.var_v[r_target],
+                                                direction='max')
         self.solve()
         max_v_target = self.get_objective_value()
 
-        self.prob.sense = LpMinimize
+        self.prob.objective = optlang.Objective(self.var_v[r_target],
+                                                direction='min')
         self.solve()
         min_v_target = self.get_objective_value()
         
@@ -328,9 +319,9 @@ class OptKnock(object):
             Run FVA on a gradient of biomass lower bounds and generate
             the data needed for creating the Phenotype Phase Plane
         """
-        self.create_prob(sense=LpMaximize)
         self.add_primal_variables_and_constraints()
-        self.prob.setObjective(self.var_v[self.r_biomass])
+        self.prob.objective = optlang.Objective(self.var_v[self.r_biomass],
+                                                direction='max')
         r_target = self.get_reaction_by_id(reaction_id)
         if r_target is None:
             return None
@@ -343,17 +334,17 @@ class OptKnock(object):
                 return None
             bm_range = np.linspace(1e-5, max_biomass - 1e-5, 50)
 
-        self.prob.setObjective(self.var_v[r_target])
-
         data = []
         for bm_lb in bm_range:
-            self.var_v[self.r_biomass].lowBound = bm_lb
+            self.var_v[self.r_biomass].lb = bm_lb
 
-            self.prob.sense = LpMaximize
+            self.prob.objective = optlang.Objective(self.var_v[r_target],
+                                                    direction='max')
             self.solve()
             max_v_target = self.get_objective_value()
 
-            self.prob.sense = LpMinimize
+            self.prob.objective = optlang.Objective(self.var_v[r_target],
+                                                    direction='min')
             self.solve()
             min_v_target = self.get_objective_value()
             
@@ -363,6 +354,7 @@ class OptKnock(object):
         
     def get_slope(self, reaction_id, epsilon_bm=0.01):
         data = self.get_PPP_data(reaction_id, bm_range=[epsilon_bm])
+        #print(data)
         if data is None:
             return None
         else:
@@ -373,10 +365,8 @@ class OptKnock(object):
         analysis_toolbox.model_summary(self.model, self.solution, html)
         
     def draw_svg(self, html):
-        from python.draw_flux import DrawFlux
-
         # Parse the SVG file of central metabolism
-        drawer = DrawFlux('data/CentralMetabolism.svg')
+        drawer = draw_flux.DrawFlux('data/CentralMetabolism.svg')
         #drawer = DrawFlux('data/EcoliMetabolism.svg')
         drawer.ToSVG(self.model, self.solution, html)
 
@@ -391,7 +381,7 @@ class OptKnock(object):
                 max_knockouts   - the maximum number of simultaneous knockouts
                 carbon_uptake_rate - in units of mmol C / (gDW*h)
         """
-        wt_model = Model.initialize()
+        wt_model = models.Model.initialize()
         
         if knockins is not None:
             wt_model.knockin_reactions(knockins, 0, 1000)

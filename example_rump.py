@@ -1,5 +1,5 @@
 #!/usr/bin/python
-from python.optknock import OptKnock
+from python.optknock_optlang import OptKnock
 import logging
 import os
 import pandas as pd

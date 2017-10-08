@@ -1,7 +1,12 @@
 import numpy as np
 import re
-import pysvg
-import pysvg.parser
+import sys
+try:
+    import pysvg
+    import pysvg.parser
+except SyntaxError:
+    sys.stderr.write('WARNING: pysvg is not yet supported by python 3.x, so '
+                     'SVG output will not be possible\n')
 from itertools import chain
 
 MAX_LINE_WIDTH = 30.0 # Set the maximal line width for stroke 
@@ -27,7 +32,7 @@ class DrawFlux(object):
 
     def __init__(self, svg_fname):
         # parse the input SVG
-        self.svg        = pysvg.parser.parse(svg_fname)
+        self.svg = pysvg.parser.parse(svg_fname)
         
         main_group = self.svg.getAllElements()[-2] # the main G structure is one before last
         defs_elem  = main_group.getElementsByType(pysvg.structure.Defs)[0]
@@ -99,7 +104,7 @@ class DrawFlux(object):
             if i >= len(direction):
                 continue
             if rxn_name not in self.rxn_svg_dict:
-                #print 'Cannot find %s in the SVG file (%d)' % (rxn_name, width[i])
+                #print('Cannot find %s in the SVG file (%d)' % (rxn_name, width[i]))
                 continue
 
             for r in self.rxn_svg_dict[rxn_name]:
@@ -147,7 +152,7 @@ class DrawFlux(object):
             if i >= len(direction):
                 continue
             if rxn_name not in self.rxn_svg_dict:
-                #print 'Cannot find %s in the SVG file (%d)' % (rxn_name, width[i])
+                #print('Cannot find %s in the SVG file (%d)' % (rxn_name, width[i]))
                 continue
 
             for r in self.rxn_svg_dict[rxn_name]:
