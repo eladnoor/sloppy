@@ -5,3 +5,5 @@ cobra>=0.9.0
 python-libsbml>=5.15.0
 pandas>=0.20.3
 pysvg>=0.2.2
+pulp>=1.6.8
+

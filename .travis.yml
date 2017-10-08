@@ -1,5 +1,8 @@
 # Config file for automatic testing at travis-ci.com
 #sudo: false  # http://docs.travis-ci.com/user/migrating-from-legacy/
+before_install:
+- sudo apt-get update -qq
+- sudo apt-get install -qq glpk-utils
 language: python
 python:
   - 2.7
