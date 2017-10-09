@@ -8,7 +8,6 @@ import optlang
 #optlang.interface = optlang.scipy_interface
 
 from python import models
-from python import draw_flux
 
 M = 1000
 
@@ -364,12 +363,6 @@ class OptKnock(object):
         import analysis_toolbox
         analysis_toolbox.model_summary(self.model, self.solution, html)
         
-    def draw_svg(self, html):
-        # Parse the SVG file of central metabolism
-        drawer = draw_flux.DrawFlux('data/CentralMetabolism.svg')
-        #drawer = DrawFlux('data/EcoliMetabolism.svg')
-        drawer.ToSVG(self.model, self.solution, html)
-
     @staticmethod
     def analyze_kos(carbon_sources, single_kos,
                     target_reaction, knockins="", n_knockouts=2, n_threads=2,
