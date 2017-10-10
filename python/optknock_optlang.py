@@ -4,18 +4,18 @@ from cobra.core import Solution
 import sys
 import pandas as pd
 from itertools import combinations
-import optlang
-#optlang.interface = optlang.scipy_interface
 
+import optlang
 from python import models
 
 M = 1000
 
 class OptKnock(object):
 
-    def __init__(self, model, verbose=False):
+    def __init__(self, model, engine=optlang.gurobi_interface, verbose=False):
         self.model = deepcopy(model)
-        self.prob = optlang.Model(name='OptKnock')
+        self.engine = engine
+        self.prob = self.engine.Model(name='OptKnock')
         self.verbose = verbose
 
         # locate the biomass reaction
@@ -31,9 +31,9 @@ class OptKnock(object):
         # create the continuous flux variables (can be positive or negative)
         self.var_v = {}
         for r in self.model.reactions:
-            self.var_v[r] = optlang.Variable('v_%s' % r.id,
-                                             lb=r.lower_bound,
-                                             ub=r.upper_bound)
+            self.var_v[r] = self.engine.Variable('v_%s' % r.id,
+                                                 lb=r.lower_bound,
+                                                 ub=r.upper_bound)
 
         # this flag will be used later to know if to expect the flux
         # variables to exist
@@ -43,18 +43,18 @@ class OptKnock(object):
         for m in self.model.metabolites:
             S_times_v = sum(self.var_v[r] * r.get_coefficient(m)
                             for r in m.reactions)
-            self.prob.add(optlang.Constraint(S_times_v, lb=0, ub=0))
+            self.prob.add(self.engine.Constraint(S_times_v, lb=0, ub=0))
     
     def add_dual_variables_and_constraints(self):
         # create dual variables associated with stoichiometric constraints
-        self.var_lambda = dict([(m, optlang.Variable('lambda_%s' % m.id, 
-                                             lb=-M, un=M))
+        self.var_lambda = dict([(m, self.engine.Variable('lambda_%s' % m.id, 
+                                                         lb=-M, un=M))
                                 for m in self.model.metabolites])
 
         # create dual variables associated with the constraints on the primal fluxes
-        self.var_w_U = dict([(r, optlang.Variable("w_U_%s" % r.id, lb=0, ub=M))
+        self.var_w_U = dict([(r, self.engine.Variable("w_U_%s" % r.id, lb=0, ub=M))
                              for r in self.model.reactions])
-        self.var_w_L = dict([(r, optlang.Variable("w_L_%s" % r.id, lb=0, ub=M))
+        self.var_w_L = dict([(r, self.engine.Variable("w_L_%s" % r.id, lb=0, ub=M))
                              for r in self.model.reactions])
 
         # add the dual constraints:
@@ -64,16 +64,16 @@ class OptKnock(object):
                                  for m, coeff in r._metabolites.iteritems()
                                  if coeff != 0)
             row_sum = S_times_lambda + self.var_w_U[r] - self.var_w_L[r]
-            self.prob.add(optlang.Constraint(row_sum, lb=r.objective_coefficient,
-                                             ub=r.objective_coefficient))
+            self.prob.add(self.engine.Constraint(row_sum, lb=r.objective_coefficient,
+                                                 ub=r.objective_coefficient))
                                    
     def prepare_FBA_primal(self):
         """
             Run standard FBA (primal)
         """
         self.add_primal_variables_and_constraints()
-        self.prob.objective = optlang.Objective(self.var_v[self.r_biomass],
-                                                direction='max')
+        self.prob.objective = self.engine.Objective(self.var_v[self.r_biomass],
+                                                    direction='max')
 
     def prepare_FBA_dual(self, use_glpk=False):
         """
@@ -85,7 +85,8 @@ class OptKnock(object):
                         for r in self.model.reactions if r.upper_bound != 0])
         w_sum_lb = sum([self.var_w_L[r] * -r.lower_bound
                         for r in self.model.reactions if r.lower_bound != 0])
-        self.prob.objective = optlang.Objective(w_sum_ub + w_sum_lb, direction='min')
+        self.prob.objective = self.engine.Objective(
+                w_sum_ub + w_sum_lb, direction='min')
     
     def get_reaction_by_id(self, reaction_id):
         if reaction_id not in self.model.reactions:
@@ -96,17 +97,17 @@ class OptKnock(object):
         
     def add_optknock_variables_and_constraints(self):
         # create the binary variables indicating which reactions knocked out
-        self.var_y = dict([(r, optlang.Variable("y_%s" % r.id, type='binary'))
+        self.var_y = dict([(r, self.engine.Variable("y_%s" % r.id, type='binary'))
                            for r in self.model.reactions])
 
         # create dual variables associated with the constraints on the primal fluxes
-        self.var_mu = dict([(r, optlang.Variable("mu_%s" % r.id))
+        self.var_mu = dict([(r, self.engine.Variable("mu_%s" % r.id))
                              for r in self.model.reactions])
 
         # equate the objectives of the primal and the dual of the inner problem
         # to force its optimization:
         #   sum_j mu_j - v_biomass = 0
-        constr = optlang.Constraint(sum(self.var_mu.values()) - self.var_v[self.r_biomass],
+        constr = self.engine.Constraint(sum(self.var_mu.values()) - self.var_v[self.r_biomass],
                                     lb=0, ub=0)
         self.prob.add(constr)
 
@@ -123,13 +124,13 @@ class OptKnock(object):
             w_sum = self.var_w_U[r] * r.upper_bound - self.var_w_L[r] * r.lower_bound
 
             # mu_j + M*y_j >= 0
-            self.prob.add(optlang.Constraint(self.var_mu[r] + M*self.var_y[r], lb=0))
+            self.prob.add(self.engine.Constraint(self.var_mu[r] + M*self.var_y[r], lb=0))
             # -mu_j + M*y_j >= 0
-            self.prob.add(optlang.Constraint(-self.var_mu[r] + M*self.var_y[r], lb=0))
+            self.prob.add(self.engine.Constraint(-self.var_mu[r] + M*self.var_y[r], lb=0))
             # mu_j - (U_jj * w_u_j - L_jj * w_l_j) + M*(1-y_j) >= 0
-            self.prob.add(optlang.Constraint(self.var_mu[r] - w_sum + M*(1-self.var_y[r]), lb=0))
+            self.prob.add(self.engine.Constraint(self.var_mu[r] - w_sum + M*(1-self.var_y[r]), lb=0))
             # -mu_j + (U_jj * w_u_j - L_jj * w_l_j) + M*(1-y_j) >= 0
-            self.prob.add(optlang.Constraint(-self.var_mu[r] + w_sum + M*(1-self.var_y[r]), lb=0))
+            self.prob.add(self.engine.Constraint(-self.var_mu[r] + w_sum + M*(1-self.var_y[r]), lb=0))
 
     def add_knockout_bounds(self, ko_candidates=None, num_deletions=5):
         """ 
@@ -149,7 +150,7 @@ class OptKnock(object):
         # set the upper bound on the number of knockouts (K)
         #   sum (1 - y_j) <= K
         ko_candidate_sum_y = sum([self.var_y[r] for r in ko_candidates])
-        constr = optlang.Constraint(ko_candidate_sum_y, lb=(len(ko_candidate_sum_y) - num_deletions))
+        constr = self.engine.Constraint(ko_candidate_sum_y, lb=(len(ko_candidate_sum_y) - num_deletions))
         self.prob.add(constr, 'number_of_deletions')
 
     def prepare_optknock(self, target_reaction_id, ko_candidates=None, 
@@ -162,7 +163,7 @@ class OptKnock(object):
         self.add_optknock_variables_and_constraints()
 
         # add the objective of maximizing the flux in the target reaction
-        self.prob.objective = optlang.Objective(
+        self.prob.objective = self.engine.Objective(
             self.var_v[self.r_target], direction='max')
 
         self.add_knockout_bounds(ko_candidates, num_deletions)
@@ -183,7 +184,7 @@ class OptKnock(object):
         self.add_optknock_variables_and_constraints()
 
         # set the objective as maximizing the shadow price of v_target upper bound
-        self.prob.objective = optlang.Objective(
+        self.prob.objective = self.engine.Objective(
             self.var_w_U[self.r_target] - self.var_w_L[self.r_target],
             direction='max')
 
@@ -282,7 +283,7 @@ class OptKnock(object):
 
     def solve_FBA(self):
         self.add_primal_variables_and_constraints()
-        self.prob.objective = optlang.Objective(self.var_v[self.r_biomass],
+        self.prob.objective = self.engine.Objective(self.var_v[self.r_biomass],
                                                 direction='max')
         self.solve()
         max_biomass = self.get_objective_value()
@@ -301,12 +302,12 @@ class OptKnock(object):
         self.var_v[self.r_biomass].lowBound = max_biomass - 1e-5
 
         r_target = self.get_reaction_by_id(reaction_id)
-        self.prob.objective = optlang.Objective(self.var_v[r_target],
+        self.prob.objective = self.engine.Objective(self.var_v[r_target],
                                                 direction='max')
         self.solve()
         max_v_target = self.get_objective_value()
 
-        self.prob.objective = optlang.Objective(self.var_v[r_target],
+        self.prob.objective = self.engine.Objective(self.var_v[r_target],
                                                 direction='min')
         self.solve()
         min_v_target = self.get_objective_value()
@@ -319,7 +320,7 @@ class OptKnock(object):
             the data needed for creating the Phenotype Phase Plane
         """
         self.add_primal_variables_and_constraints()
-        self.prob.objective = optlang.Objective(self.var_v[self.r_biomass],
+        self.prob.objective = self.engine.Objective(self.var_v[self.r_biomass],
                                                 direction='max')
         r_target = self.get_reaction_by_id(reaction_id)
         if r_target is None:
@@ -337,12 +338,12 @@ class OptKnock(object):
         for bm_lb in bm_range:
             self.var_v[self.r_biomass].lb = bm_lb
 
-            self.prob.objective = optlang.Objective(self.var_v[r_target],
+            self.prob.objective = self.engine.Objective(self.var_v[r_target],
                                                     direction='max')
             self.solve()
             max_v_target = self.get_objective_value()
 
-            self.prob.objective = optlang.Objective(self.var_v[r_target],
+            self.prob.objective = self.engine.Objective(self.var_v[r_target],
                                                     direction='min')
             self.solve()
             min_v_target = self.get_objective_value()
@@ -366,7 +367,7 @@ class OptKnock(object):
     @staticmethod
     def analyze_kos(carbon_sources, single_kos,
                     target_reaction, knockins="", n_knockouts=2, n_threads=2,
-                    carbon_uptake_rate=50):
+                    carbon_uptake_rate=50, solver='gurobi'):
         """
             Args:
                 target_reaction - the reaction for which the coupling to BM yield is made
@@ -374,6 +375,17 @@ class OptKnock(object):
                 max_knockouts   - the maximum number of simultaneous knockouts
                 carbon_uptake_rate - in units of mmol C / (gDW*h)
         """
+        if solver.lower() == 'gurobi':
+            engine = optlang.gurobi_interface
+        elif solver.lower() == 'glpk':
+            engine = optlang.glpk_interface
+        elif solver.lower() == 'scipy':
+            engine = optlang.scipy_interface
+        elif solver.lower() == 'cplex':
+            engine = optlang.cplex_interface
+        else:
+            raise ValueError('unknown solver: ' + solver)
+
         wt_model = models.Model.initialize()
         
         if knockins is not None:
@@ -411,11 +423,11 @@ class OptKnock(object):
                 if ko != '':
                     temp_model.knockout_reactions(ko)
             
-            yd = OptKnock(temp_model).solve_FBA() or 0
+            yd = OptKnock(temp_model, engine=engine).solve_FBA() or 0
             if (target_reaction is not None) and (yd == 0):
                 slope = 0
             else:
-                slope = OptKnock(temp_model).get_slope(target_reaction)
+                slope = OptKnock(temp_model, engine=engine).get_slope(target_reaction)
             return ('|'.join(kos), carbon_source, yd, slope)
         
         data = map(calculate_yield_and_slope, kos_and_cs)

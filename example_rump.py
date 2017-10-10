@@ -1,5 +1,5 @@
 #!/usr/bin/python
-from python.optknock_optlang import OptKnock
+from python.optknock_pulp import OptKnock
 import logging
 import os
 import pandas as pd
@@ -15,10 +15,13 @@ CARBON_SOURCES = ['methanol,g6p',
                   'methanol,dhap',
                   'methanol']
 
-SINGLE_KOS = ['', 'GLCpts','PGI','PFK','FBP','FBA','TPI','GAPD,PGK','PGM',
-              'ENO','PYK','PPS','PDH','PFL','G6PDH2r,PGL','GND',
-              'EDD,EDA','RPE','RPI','TKT1,TKT2','TALA','PPC','PPCK',
-              'CS','ACONTa,ACONTb','ALCD2x','ACALD']
+SINGLE_KOS = ['', 'GLCpts','PGI','PFK','FBP','FBA','TPI','GAPD','PGK','PGM',
+              'ENO','PYK','PPS','PDH','PFL','G6PDH2r','PGL','GND',
+              'EDD','EDA','RPE','RPI','TKT1','TKT2','TALA','PPC','PPCK',
+              'CS','ACONTa','ACONTb','ALCD2x','ACALD']
+
+#SINGLE_KOS = ['PGI','GAPD']
+
 
 if __name__ == "__main__":
     logger = logging.getLogger('')
@@ -27,13 +30,13 @@ if __name__ == "__main__":
         os.mkdir('res')
     
     max_ko = 2
-    
     title = 'rump'; target_reaction = 'H6PS'; knockins = 'MEDH,H6PS,H6PI,H4MPTP,FDH'
     
     df_fname = 'res/data_%s.csv' % title
     if True:    
         df = OptKnock.analyze_kos(CARBON_SOURCES, SINGLE_KOS,
-                                  target_reaction, knockins, max_ko)
+                                  target_reaction, knockins, max_ko,
+                                  solver='gurobi')
         with open(df_fname, 'w') as fp:
             df.round(3).to_csv(fp)
     else:

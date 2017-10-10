@@ -12,9 +12,10 @@ M = 1000
 
 class OptKnock(object):
 
-    def __init__(self, model, verbose=False):
+    def __init__(self, model, verbose=False, solver=solvers.GUROBI):
         self.model = deepcopy(model)
         self.verbose = verbose
+        self.solver = solver
 
         # locate the biomass reaction
         biomass_reactions = [r for r in self.model.reactions
@@ -25,19 +26,12 @@ class OptKnock(object):
         
         self.has_flux_as_variables = False
     
-    def create_prob(self, sense=LpMaximize, solver='glpk'):
+    def create_prob(self, sense=LpMaximize):
         # create the LP
         self.prob = LpProblem('OptKnock', sense=sense)
-        if solver == 'glpk':
-            self.prob.solver = solvers.GLPK(msg=self.verbose)
-        elif solver == 'cplex':
-            self.prob.solver = solvers.CPLEX(msg=self.verbose)
-        elif solver == 'gurobi':
-            self.prob.solver = solvers.GUROBI(msg=self.verbose)
-        else:
-            raise ValueError('Unknown solver: ' + solver)
+        self.prob.solver = self.solver(msg=self.verbose)
         if not self.prob.solver.available():
-            raise Exception("%s not available" % solver)
+            raise Exception("solver not available")
 
     def add_primal_variables_and_constraints(self):
         # create the continuous flux variables (can be positive or negative)
@@ -379,7 +373,7 @@ class OptKnock(object):
     @staticmethod
     def analyze_kos(carbon_sources, single_kos,
                     target_reaction, knockins="", n_knockouts=2, n_threads=2,
-                    carbon_uptake_rate=50):
+                    carbon_uptake_rate=50, solver='gurobi'):
         """
             Args:
                 target_reaction - the reaction for which the coupling to BM yield is made
@@ -387,6 +381,16 @@ class OptKnock(object):
                 max_knockouts   - the maximum number of simultaneous knockouts
                 carbon_uptake_rate - in units of mmol C / (gDW*h)
         """
+        if solver.lower() == 'gurobi':
+            solver = solvers.GUROBI
+        elif solver.lower() == 'glpk':
+            solver = solvers.GLPK
+        elif solver.lower() == 'scip':
+            solver = solvers.SCIP
+        elif solver.lower() == 'cplex':
+            solver = solvers.CPLEX
+        else:
+            raise ValueError('unknown solver: ' + solver)
         wt_model = Model.initialize()
         
         if knockins is not None:
@@ -424,11 +428,11 @@ class OptKnock(object):
                 if ko != '':
                     temp_model.knockout_reactions(ko)
             
-            yd = OptKnock(temp_model).solve_FBA() or 0
+            yd = OptKnock(temp_model, solver=solver).solve_FBA() or 0
             if (target_reaction is not None) and (yd == 0):
                 slope = 0
             else:
-                slope = OptKnock(temp_model).get_slope(target_reaction)
+                slope = OptKnock(temp_model, solver=solver).get_slope(target_reaction)
             return ('|'.join(kos), carbon_source, yd, slope)
         
         data = map(calculate_yield_and_slope, kos_and_cs)
