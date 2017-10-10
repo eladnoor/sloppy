@@ -30,7 +30,7 @@ class TestReactionParsing(unittest.TestCase):
                 ['methanol,succ', 'methanol,xu5p_D'],
                 ['FBP', 'RPI'],
                 target_reaction, knockins,
-                n_knockouts=1)
+                n_knockouts=1, solver='glpk')
 
         yield_df = df.pivot('knockouts', 'carbon source', 'yield')        
         slope_df = df.pivot('knockouts', 'carbon source', 'slope')        
@@ -51,7 +51,7 @@ class TestReactionParsing(unittest.TestCase):
                 ['methanol,succ', 'methanol,xu5p_D'],
                 ['FBP', 'RPI'],
                 target_reaction, knockins,
-                n_knockouts=1)
+                n_knockouts=1, solver='glpk')
 
         yield_df = df.pivot('knockouts', 'carbon source', 'yield')        
         slope_df = df.pivot('knockouts', 'carbon source', 'slope')        
