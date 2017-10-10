@@ -16,12 +16,6 @@ class TestReactionParsing(unittest.TestCase):
         except ImportError:
             self.fail('optlang is not installed, please run "pip install optlang"')
 
-#        try:
-#            optlang.interface = optlang.scipy_interface
-#        except AttributeError:
-#            self.fail('please install the optlang scipy interface')
-
-        
         from python import optknock_optlang
         
         target_reaction = 'H6PS'

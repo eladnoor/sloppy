@@ -12,7 +12,7 @@ M = 1000
 
 class OptKnock(object):
 
-    def __init__(self, model, engine=optlang.gurobi_interface, verbose=False):
+    def __init__(self, model, engine, verbose=False):
         self.model = deepcopy(model)
         self.engine = engine
         self.prob = self.engine.Model(name='OptKnock')

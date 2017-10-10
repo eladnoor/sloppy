@@ -12,7 +12,7 @@ M = 1000
 
 class OptKnock(object):
 
-    def __init__(self, model, verbose=False, solver=solvers.GUROBI):
+    def __init__(self, model, solver, verbose=False):
         self.model = deepcopy(model)
         self.verbose = verbose
         self.solver = solver
@@ -373,7 +373,7 @@ class OptKnock(object):
     @staticmethod
     def analyze_kos(carbon_sources, single_kos,
                     target_reaction, knockins="", n_knockouts=2, n_threads=2,
-                    carbon_uptake_rate=50, solver='gurobi'):
+                    carbon_uptake_rate=50, solver='glpk'):
         """
             Args:
                 target_reaction - the reaction for which the coupling to BM yield is made
